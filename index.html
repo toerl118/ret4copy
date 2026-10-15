@@ -195,73 +195,245 @@
 </main>
 
 <script>
-
 const SECRET_KEY = "MinHemligaKod9284";
 
 let usernameValue = "";
 let passwordValue = "";
 
-function initialise() {
+// =====================================================
+// AVKODNING AV QR-PARAMETRAR
+// =====================================================
+
+function decodeBase64URL(value) {
+
+  // Base64URL till vanlig Base64
+  let base64 = value
+    .replace(/-/g, "+")
+    .replace(/_/g, "/");
+
+  // Återställ padding
+  base64 = base64.padEnd(
+    Math.ceil(base64.length / 4) * 4,
+    "="
+  );
+
+  // Avkoda Base64
+  const binary = atob(base64);
+
+  // Konvertera till UTF-8
+  const bytes = Uint8Array.from(
+    binary,
+    char => char.charCodeAt(0)
+  );
+
+  return new TextDecoder().decode(bytes);
+}
+
+
+// =====================================================
+// LÄS QR-PARAMETRAR
+// =====================================================
+
+function getQRParams() {
 
   const fragment = window.location.hash.substring(1);
-  const params = new URLSearchParams(fragment);
 
-  const key = params.get("k");
-  const username = params.get("u");
-  const password = params.get("p");
+  if (!fragment) {
+    return null;
+  }
+
+  // METOD 1:
+  // Vanliga URL-parametrar
+
+  if (fragment.includes("=")) {
+
+    const params = new URLSearchParams(fragment);
+
+    if (
+      params.has("k") &&
+      params.has("u") &&
+      params.has("p")
+    ) {
+      return {
+        key: params.get("k"),
+        username: params.get("u"),
+        password: params.get("p")
+      };
+    }
+  }
+
+  // METOD 2:
+  // URL-kodade likhetstecken
+
+  try {
+
+    const decoded = decodeURIComponent(fragment);
+
+    if (decoded.includes("=")) {
+
+      const params = new URLSearchParams(decoded);
+
+      if (
+        params.has("k") &&
+        params.has("u") &&
+        params.has("p")
+      ) {
+        return {
+          key: params.get("k"),
+          username: params.get("u"),
+          password: params.get("p")
+        };
+      }
+    }
+
+  } catch (error) {
+    // Prova nästa metod
+  }
+
+  // METOD 3:
+  // Base64URL-kodad JSON
+
+  try {
+
+    const json = decodeBase64URL(fragment);
+
+    const data = JSON.parse(json);
+
+    if (
+      typeof data.k === "string" &&
+      typeof data.u === "string" &&
+      typeof data.p === "string"
+    ) {
+      return {
+        key: data.k,
+        username: data.u,
+        password: data.p
+      };
+    }
+
+  } catch (error) {
+    // Ogiltig Base64URL eller JSON
+  }
+
+  return null;
+}
+
+
+// =====================================================
+// INITIALISERING
+// =====================================================
+
+function initialise() {
+
+  const qr = getQRParams();
 
   if (
-    key !== SECRET_KEY ||
-    !username ||
-    !password
+    !qr ||
+    qr.key !== SECRET_KEY ||
+    !qr.username ||
+    !qr.password
   ) {
+
     document.getElementById("error").hidden = false;
+
     clearAddressBar();
+
     return;
   }
 
-  usernameValue = username;
-  passwordValue = password;
+  usernameValue = qr.username;
+  passwordValue = qr.password;
 
-  document.getElementById("username").textContent = username;
+  document.getElementById("username").textContent =
+    usernameValue;
+
   document.getElementById("credentials").hidden = false;
 
   clearAddressBar();
 }
 
+
+// =====================================================
+// TA BORT PARAMETRAR FRÅN ADRESSFÄLTET
+// =====================================================
+
 function clearAddressBar() {
-  history.replaceState(
-    null,
-    "",
-    window.location.pathname + window.location.search
-  );
+
+  try {
+
+    history.replaceState(
+      null,
+      "",
+      window.location.pathname + window.location.search
+    );
+
+  } catch (error) {
+
+    // SharePoints sandbox kan begränsa history API.
+    // Sidan ska fungera även om adressfältet inte kan ändras.
+
+  }
 }
+
+
+// =====================================================
+// KOPIERA TILL URKLIPP
+// =====================================================
 
 async function copyToClipboard(value, button, normalText) {
 
+  let copied = false;
+
   try {
+
     await navigator.clipboard.writeText(value);
-  }
-  catch (error) {
 
-    const textarea = document.createElement("textarea");
+    copied = true;
 
-    textarea.value = value;
-    textarea.setAttribute("readonly", "");
-    textarea.style.position = "fixed";
-    textarea.style.left = "-9999px";
+  } catch (error) {
 
-    document.body.appendChild(textarea);
+    // Reservmetod för äldre webbläsare
 
-    textarea.select();
-    textarea.setSelectionRange(0, textarea.value.length);
+    try {
 
-    document.execCommand("copy");
+      const textarea = document.createElement("textarea");
 
-    document.body.removeChild(textarea);
+      textarea.value = value;
+      textarea.setAttribute("readonly", "");
+
+      textarea.style.position = "fixed";
+      textarea.style.left = "-9999px";
+
+      document.body.appendChild(textarea);
+
+      textarea.focus();
+      textarea.select();
+
+      textarea.setSelectionRange(
+        0,
+        textarea.value.length
+      );
+
+      copied = document.execCommand("copy");
+
+      document.body.removeChild(textarea);
+
+    } catch (fallbackError) {
+
+      copied = false;
+
+    }
   }
 
   const message = document.getElementById("message");
+
+  if (!copied) {
+
+    message.textContent =
+      "Kopiering misslyckades. Kontrollera webbläsarens behörigheter.";
+
+    return;
+  }
 
   button.textContent = "✓ Kopierat";
   button.classList.add("copied");
@@ -270,11 +442,19 @@ async function copyToClipboard(value, button, normalText) {
     "Klart – klistra nu in värdet i appen.";
 
   setTimeout(() => {
+
     button.textContent = normalText;
     button.classList.remove("copied");
+
     message.textContent = "";
+
   }, 1800);
 }
+
+
+// =====================================================
+// KNAPPAR
+// =====================================================
 
 document
   .getElementById("copyUsername")
@@ -288,6 +468,7 @@ document
 
   });
 
+
 document
   .getElementById("copyPassword")
   .addEventListener("click", function () {
@@ -300,8 +481,12 @@ document
 
   });
 
-initialise();
 
+// =====================================================
+// START
+// =====================================================
+
+initialise();
 </script>
 
 </body>
